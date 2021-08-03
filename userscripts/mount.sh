@@ -21,8 +21,8 @@ mkdir system/
 sudo mount -o ro system.img system/
 sudo mount -o ro vendor.img system/vendor/
 
-echo ">> ["(date)"] Mounted prop files (don't forget to unmount later..)"
-echo ">> ["(date)"] Ready for build"
+echo ">> [$(date)] Mounted prop files (don't forget to unmount later..)"
+echo ">> [$(date)] Ready for build"
 
 popd
 
