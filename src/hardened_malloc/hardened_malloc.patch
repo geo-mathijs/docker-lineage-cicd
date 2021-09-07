@@ -1,0 +1,147 @@
+diff --git a/bionic/libc/Android.bp b/bionic/libc/Android.bp
+index ce71405..46d8d61 100644
+--- a/bionic/libc/Android.bp
++++ b/bionic/libc/Android.bp
+@@ -50,6 +50,8 @@ libc_common_flags = [
+ 
+     // GWP-ASan requires platform TLS.
+     "-fno-emulated-tls",
++
++    "-DH_MALLOC_PREFIX",
+ ]
+ 
+ // Define some common cflags
+@@ -123,19 +125,22 @@ libc32_scudo_product_variables = {
+ cc_defaults {
+     name: "libc_native_allocator_defaults",
+ 
+-    whole_static_libs: [
+-        "libjemalloc5",
+-        "libc_jemalloc_wrapper",
+-    ],
+-    header_libs: ["gwp_asan_headers"],
++    whole_static_libs: ["libc_jemalloc_wrapper"],
+     multilib: {
++        lib32: {
++            cflags: ["-DUSE_SCUDO"],
++            whole_static_libs: ["libscudo"],
++            exclude_static_libs: [
++                "libjemalloc5",
++                "libc_jemalloc_wrapper",
++            ],
++        },
+         lib64: {
+-            product_variables: libc_scudo_product_variables,
++            cflags: ["-DH_MALLOC_PREFIX"],
++            whole_static_libs: ["libhardened_malloc"],
+         },
+-        lib32: {
+-            product_variables: libc32_scudo_product_variables,
+-        }
+     },
++    header_libs: ["gwp_asan_headers"],
+ }
+ 
+ // Functions not implemented by jemalloc directly, or that need to
+@@ -143,12 +148,19 @@ cc_defaults {
+ cc_library_static {
+     name: "libc_jemalloc_wrapper",
+     defaults: ["libc_defaults"],
+-    srcs: ["bionic/jemalloc_wrapper.cpp"],
++    multilib: {
++        lib32: {
++            // Used to pull in the jemalloc/hardened_malloc include directory so that if the
++            // library is removed, the include directory is also removed.
++            srcs: ["bionic/jemalloc_wrapper.cpp"],
++            static_libs: ["libjemalloc5"],
++        },
++        lib64: {
++            srcs: ["bionic/h_malloc_wrapper.cpp"],
++            static_libs: ["libhardened_malloc"],
++        },
++    },
+     cflags: ["-fvisibility=hidden"],
+-
+-    // Used to pull in the jemalloc include directory so that if the
+-    // library is removed, the include directory is also removed.
+-    static_libs: ["libjemalloc5"],
+ }
+ 
+ // ========================================================
+diff --git a/bionic/libc/bionic/h_malloc_wrapper.cpp b/bionic/libc/bionic/h_malloc_wrapper.cpp
+index e69de29..5fb0968 100644
+--- a/bionic/libc/bionic/h_malloc_wrapper.cpp
++++ b/bionic/libc/bionic/h_malloc_wrapper.cpp
+@@ -0,0 +1,51 @@
++#include <errno.h>
++#include <malloc.h>
++#include <sys/param.h>
++#include <unistd.h>
++
++#include <private/MallocXmlElem.h>
++
++#include "h_malloc.h"
++
++__BEGIN_DECLS
++int h_malloc_info(int options, FILE* fp);
++__END_DECLS
++
++int h_malloc_info(int options, FILE* fp) {
++  if (options != 0) {
++    errno = EINVAL;
++    return -1;
++  }
++
++  fflush(fp);
++  int fd = fileno(fp);
++  MallocXmlElem root(fd, "malloc", "version=\"jemalloc-1\"");
++
++  // Dump all of the large allocations in the arenas.
++  for (size_t i = 0; i < h_mallinfo_narenas(); i++) {
++    struct mallinfo mi = h_mallinfo_arena_info(i);
++    if (mi.hblkhd != 0) {
++      MallocXmlElem arena_elem(fd, "heap", "nr=\"%d\"", i);
++      {
++        MallocXmlElem(fd, "allocated-large").Contents("%zu", mi.ordblks);
++        MallocXmlElem(fd, "allocated-huge").Contents("%zu", mi.uordblks);
++        MallocXmlElem(fd, "allocated-bins").Contents("%zu", mi.fsmblks);
++
++        size_t total = 0;
++        for (size_t j = 0; j < h_mallinfo_nbins(); j++) {
++          struct mallinfo mi = h_mallinfo_bin_info(i, j);
++          if (mi.ordblks != 0) {
++            MallocXmlElem bin_elem(fd, "bin", "nr=\"%d\"", j);
++            MallocXmlElem(fd, "allocated").Contents("%zu", mi.ordblks);
++            MallocXmlElem(fd, "nmalloc").Contents("%zu", mi.uordblks);
++            MallocXmlElem(fd, "ndalloc").Contents("%zu", mi.fordblks);
++            total += mi.ordblks;
++          }
++        }
++        MallocXmlElem(fd, "bins-total").Contents("%zu", total);
++      }
++    }
++  }
++
++  return 0;
++}
+diff --git a/bionic/libc/bionic/malloc_common.h b/bionic/libc/bionic/malloc_common.h
+index 4afcc4a..cca9e52 100644
+--- a/bionic/libc/bionic/malloc_common.h
++++ b/bionic/libc/bionic/malloc_common.h
+@@ -67,8 +67,16 @@ __END_DECLS
+ 
+ #else
+ 
++#ifdef __LP64__
++#include "h_malloc.h"
++#define Malloc(function)  h_ ## function
++__BEGIN_DECLS
++int h_malloc_info(int options, FILE* fp);
++__END_DECLS
++#else
+ #include "jemalloc.h"
+ #define Malloc(function)  je_ ## function
++#endif
+ 
+ #endif
+ 

@@ -251,6 +251,12 @@ for branch in ${BRANCH_NAME//,/ }; do
       fi
     fi
 
+    # Enable hardened malloc
+    echo ">> [$(date)] Applying hardened malloc patches"
+    patch --force -p1 -i /root/hardened_malloc/hardened_malloc.patch
+    sed -i 's/\([\t ]\+\)\("libjemalloc5",\)/\1"libhardened_malloc",\n\1\2/g' build/soong/apex/apex.go
+    sed -i "s/\(write \/proc\/sys\/vm\/min_free_order_shift 4\)/\1\n\n    write \/proc\/sys\/vm\/max_map_count 1048576/g" system/core/rootdir/init.rc
+
     # Prepare the environment
     echo ">> [$(date)] Preparing build environment"
     source build/envsetup.sh > /dev/null
