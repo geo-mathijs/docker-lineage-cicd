@@ -251,11 +251,18 @@ for branch in ${BRANCH_NAME//,/ }; do
       fi
     fi
 
-    # Enable hardened malloc
-    echo ">> [$(date)] Applying hardened malloc patches"
-    patch --force -p1 -i /root/hardened_malloc/hardened_malloc.patch
-    sed -i 's/\([\t ]\+\)\("libjemalloc5",\)/\1"libhardened_malloc",\n\1\2/g' build/soong/apex/apex.go
-    sed -i "s/\(write \/proc\/sys\/vm\/min_free_order_shift 4\)/\1\n\n    write \/proc\/sys\/vm\/max_map_count 1048576/g" system/core/rootdir/init.rc
+    if [ ! -f "bionic/libc/bionic/h_malloc_wrapper.cpp" ]; then
+      echo ">> [$(date)] Applying hardened malloc patches"
+      patch --force -p1 -i /root/hardened_malloc/hardened_malloc.patch
+
+      if ! grep -q "libhardened_malloc" build/soong/apex/apex.go; then
+        sed -i 's/\([\t ]\+\)\("libjemalloc5",\)/\1"libhardened_malloc",\n\1\2/g' build/soong/apex/apex.go
+      fi
+
+      if ! grep -q "max_map_count 1048576" system/core/rootdir/init.rc; then
+        sed -i "s/\(write \/proc\/sys\/vm\/min_free_order_shift 4\)/\1\n\n    write \/proc\/sys\/vm\/max_map_count 1048576/g" system/core/rootdir/init.rc
+      fi
+    fi
 
     # Prepare the environment
     echo ">> [$(date)] Preparing build environment"
@@ -309,8 +316,16 @@ for branch in ${BRANCH_NAME//,/ }; do
 
         DEBUG_LOG="$LOGS_DIR/$logsubdir/lineage-$los_ver-$builddate-$RELEASE_TYPE-$codename.log"
 
-        if [ -f /root/userscripts/pre-build.sh ]; then
-          echo ">> [$(date)] Running pre-build.sh for $codename" >> "$DEBUG_LOG"
+        echo ">> [$(date)] Running breakfast for $codename, $branch branch" | tee -a "$DEBUG_LOG"
+        breakfast "$codename" "user" &>> "$DEBUG_LOG"
+
+        if [ ! -d "device/fairphone/FP3" ]; then
+          echo ">> [$(date)] Missing \"device/fairphone/FP3\", aborting"
+          exit 1
+        fi
+
+        if [ -f "/root/userscripts/pre-build.sh" ]; then
+          echo ">> [$(date)] Running pre-build.sh for $codename" | tee -a "$DEBUG_LOG"
           /root/userscripts/pre-build.sh "$codename" &>> "$DEBUG_LOG"
         fi
 
