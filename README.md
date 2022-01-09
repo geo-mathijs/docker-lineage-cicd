@@ -7,3 +7,4 @@ This is a fork of the build pipeline for the popular LineageOS for microG ROM. I
 - Hardened malloc
 - Automatically pull latest vendor blobs from main LineageOS image
 - Compile in user mode
+
