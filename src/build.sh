@@ -26,7 +26,7 @@ cd "$SRC_DIR"
 
 if [ -f /root/userscripts/begin.sh ]; then
   echo ">> [$(date)] Running begin.sh"
-  /root/userscripts/begin.sh
+  /root/userscripts/begin.sh || echo ">> [$(date)] Warning: begin.sh failed!"
 fi
 
 # If requested, clean the OUT dir in order to avoid clutter
@@ -55,6 +55,18 @@ if [ -d "$SRC_DIR/.repo" ]; then
   find . -maxdepth 1 ! -name "$branch_dir" ! -path . -exec mv {} "$branch_dir" \;
 fi
 
+
+jobs_arg=()
+if [ -n "${PARALLEL_JOBS-}" ]; then
+  if [[ "$PARALLEL_JOBS" =~ ^[1-9][0-9]*$ ]]; then
+    jobs_arg+=( "-j$PARALLEL_JOBS" )
+  else
+    echo "PARALLEL_JOBS is not a positive number: $PARALLEL_JOBS"
+    exit 1
+  fi
+fi
+
+
 if [ "$LOCAL_MIRROR" = true ]; then
 
   cd "$MIRROR_DIR"
@@ -77,7 +89,7 @@ if [ "$LOCAL_MIRROR" = true ]; then
   fi
 
   echo ">> [$(date)] Syncing mirror repository" | tee -a "$repo_log"
-  repo sync --force-sync --no-clone-bundle &>> "$repo_log"
+  repo sync "${jobs_arg[@]}" --force-sync --no-clone-bundle &>> "$repo_log"
 fi
 
 for branch in ${BRANCH_NAME//,/ }; do
@@ -88,34 +100,41 @@ for branch in ${BRANCH_NAME//,/ }; do
 
   if [ -n "$branch" ] && [ -n "$devices" ]; then
     vendor=lineage
-    permissioncontroller_patch=""
+    apps_permissioncontroller_patch=""
+    modules_permission_patch=""
     case "$branch" in
       cm-14.1*)
         vendor="cm"
         themuppets_branch="cm-14.1"
         android_version="7.1.2"
-        patch_name="android_frameworks_base-N.patch"
+        frameworks_base_patch="android_frameworks_base-N.patch"
         ;;
       lineage-15.1*)
         themuppets_branch="lineage-15.1"
         android_version="8.1"
-        patch_name="android_frameworks_base-O.patch"
+        frameworks_base_patch="android_frameworks_base-O.patch"
         ;;
       lineage-16.0*)
         themuppets_branch="lineage-16.0"
         android_version="9"
-        patch_name="android_frameworks_base-P.patch"
+        frameworks_base_patch="android_frameworks_base-P.patch"
         ;;
       lineage-17.1*)
         themuppets_branch="lineage-17.1"
         android_version="10"
-        patch_name="android_frameworks_base-Q.patch"
+        frameworks_base_patch="android_frameworks_base-Q.patch"
         ;;
       lineage-18.1*)
         themuppets_branch="lineage-18.1"
         android_version="11"
-        patch_name="android_frameworks_base-R.patch"
-        permissioncontroller_patch="packages_apps_PermissionController-R.patch"
+        frameworks_base_patch="android_frameworks_base-R.patch"
+        apps_permissioncontroller_patch="packages_apps_PermissionController-R.patch"
+        ;;
+      lineage-19.1*)
+        themuppets_branch="lineage-19.1"
+        android_version="12"
+        frameworks_base_patch="android_frameworks_base-S.patch"
+        modules_permission_patch="packages_modules_Permission-S.patch"
         ;;
       *)
         echo ">> [$(date)] Building branch $branch is not (yet) suppported"
@@ -132,7 +151,8 @@ for branch in ${BRANCH_NAME//,/ }; do
     echo ">> [$(date)] Devices: $devices"
 
     # Remove previous changes of vendor/cm, vendor/lineage and frameworks/base (if they exist)
-    for path in "vendor/cm" "vendor/lineage" "frameworks/base" "packages/apps/PermissionController"; do
+    # TODO: maybe reset everything using https://source.android.com/setup/develop/repo#forall
+    for path in "vendor/cm" "vendor/lineage" "frameworks/base" "packages/apps/PermissionController" "packages/modules/Permission"; do
       if [ -d "$path" ]; then
         cd "$path"
         git reset -q --hard
@@ -162,7 +182,7 @@ for branch in ${BRANCH_NAME//,/ }; do
 
     echo ">> [$(date)] Syncing branch repository" | tee -a "$repo_log"
     builddate=$(date +%Y%m%d)
-    repo sync -c --force-sync &>> "$repo_log"
+    repo sync "${jobs_arg[@]}" -c --force-sync &>> "$repo_log"
 
     if [ ! -d "vendor/$vendor" ]; then
       echo ">> [$(date)] Missing \"vendor/$vendor\", aborting"
@@ -173,8 +193,12 @@ for branch in ${BRANCH_NAME//,/ }; do
     mkdir -p "vendor/$vendor/overlay/microg/"
     sed -i "1s;^;PRODUCT_PACKAGE_OVERLAYS := vendor/$vendor/overlay/microg\n;" "vendor/$vendor/config/common.mk"
 
-    los_ver_major=$(sed -n -e 's/^\s*PRODUCT_VERSION_MAJOR = //p' "vendor/$vendor/config/common.mk")
-    los_ver_minor=$(sed -n -e 's/^\s*PRODUCT_VERSION_MINOR = //p' "vendor/$vendor/config/common.mk")
+    makefile_containing_version="vendor/$vendor/config/common.mk"
+    if [ -f "vendor/$vendor/config/version.mk" ]; then
+      makefile_containing_version="vendor/$vendor/config/version.mk"
+    fi
+    los_ver_major=$(sed -n -e 's/^\s*PRODUCT_VERSION_MAJOR = //p' "$makefile_containing_version")
+    los_ver_minor=$(sed -n -e 's/^\s*PRODUCT_VERSION_MINOR = //p' "$makefile_containing_version")
     los_ver="$los_ver_major.$los_ver_minor"
 
     # If needed, apply the microG's signature spoofing patch
@@ -182,20 +206,28 @@ for branch in ${BRANCH_NAME//,/ }; do
       # Determine which patch should be applied to the current Android source tree
       cd frameworks/base
       if [ "$SIGNATURE_SPOOFING" = "yes" ]; then
-        echo ">> [$(date)] Applying the standard signature spoofing patch ($patch_name) to frameworks/base"
+        echo ">> [$(date)] Applying the standard signature spoofing patch ($frameworks_base_patch) to frameworks/base"
         echo ">> [$(date)] WARNING: the standard signature spoofing patch introduces a security threat"
-        patch --quiet --force -p1 -i "/root/signature_spoofing_patches/$patch_name"
+        patch --quiet --force -p1 -i "/root/signature_spoofing_patches/$frameworks_base_patch"
       else
-        echo ">> [$(date)] Applying the restricted signature spoofing patch (based on $patch_name) to frameworks/base"
-        sed 's/android:protectionLevel="dangerous"/android:protectionLevel="signature|privileged"/' "/root/signature_spoofing_patches/$patch_name" | patch --quiet --force -p1
+        echo ">> [$(date)] Applying the restricted signature spoofing patch (based on $frameworks_base_patch) to frameworks/base"
+        sed 's/android:protectionLevel="dangerous"/android:protectionLevel="signature|privileged"/' "/root/signature_spoofing_patches/$frameworks_base_patch" | patch --quiet --force -p1
       fi
       git clean -q -f
       cd ../..
 
-      if [ -n "$permissioncontroller_patch" ] && [ "$SIGNATURE_SPOOFING" = "yes" ]; then
+      if [ -n "$apps_permissioncontroller_patch" ] && [ "$SIGNATURE_SPOOFING" = "yes" ]; then
         cd packages/apps/PermissionController
-        echo ">> [$(date)] Applying the PermissionController patch ($permissioncontroller_patch) to packages/apps/PermissionController"
-        patch --quiet --force -p1 -i "/root/signature_spoofing_patches/$permissioncontroller_patch"
+        echo ">> [$(date)] Applying the apps/PermissionController patch ($apps_permissioncontroller_patch) to packages/apps/PermissionController"
+        patch --quiet --force -p1 -i "/root/signature_spoofing_patches/$apps_permissioncontroller_patch"
+        git clean -q -f
+        cd ../../..
+      fi
+
+      if [ -n "$modules_permission_patch" ] && [ "$SIGNATURE_SPOOFING" = "yes" ]; then
+        cd packages/modules/Permission
+        echo ">> [$(date)] Applying the modules/Permission patch ($modules_permission_patch) to packages/modules/Permission"
+        patch --quiet --force -p1 -i "/root/signature_spoofing_patches/$modules_permission_patch"
         git clean -q -f
         cd ../../..
       fi
@@ -206,7 +238,7 @@ for branch in ${BRANCH_NAME//,/ }; do
     fi
 
     echo ">> [$(date)] Setting \"$RELEASE_TYPE\" as release type"
-    sed -i "/\$(filter .*\$(${vendor^^}_BUILDTYPE)/,+2d" "vendor/$vendor/config/common.mk"
+    sed -i "/\$(filter .*\$(${vendor^^}_BUILDTYPE)/,/endif/d" "$makefile_containing_version"
 
     # Set a custom updater URI if a OTA URL is provided
     echo ">> [$(date)] Adding OTA URL overlay (for custom URL $OTA_URL)"
@@ -267,27 +299,11 @@ for branch in ${BRANCH_NAME//,/ }; do
 
     if [ -f /root/userscripts/before.sh ]; then
       echo ">> [$(date)] Running before.sh"
-      /root/userscripts/before.sh
+      /root/userscripts/before.sh || echo ">> [$(date)] Warning: before.sh failed!"
     fi
 
     for codename in ${devices//,/ }; do
       if [ -n "$codename" ]; then
-
-        currentdate=$(date +%Y%m%d)
-        if [ "$builddate" != "$currentdate" ]; then
-          # Sync the source code
-          builddate=$currentdate
-
-          if [ "$LOCAL_MIRROR" = true ]; then
-            echo ">> [$(date)] Syncing mirror repository" | tee -a "$repo_log"
-            cd "$MIRROR_DIR"
-            repo sync --force-sync --no-clone-bundle &>> "$repo_log"
-          fi
-
-          echo ">> [$(date)] Syncing branch repository" | tee -a "$repo_log"
-          cd "$SRC_DIR/$branch_dir"
-          repo sync -c --force-sync &>> "$repo_log"
-        fi
 
         if [ "$BUILD_OVERLAY" = true ]; then
           lowerdir=$SRC_DIR/$branch_dir
@@ -318,7 +334,14 @@ for branch in ${BRANCH_NAME//,/ }; do
         DEBUG_LOG="$LOGS_DIR/$logsubdir/lineage-$los_ver-$builddate-$RELEASE_TYPE-$codename.log"
 
         echo ">> [$(date)] Running breakfast for $codename, $branch branch" | tee -a "$DEBUG_LOG"
+        set +eu
         breakfast "$codename" "user" &>> "$DEBUG_LOG"
+        breakfast_returncode=$?
+        set -eu
+        if [ $breakfast_returncode -ne 0 ]; then
+            echo ">> [$(date)] breakfast failed for $codename, $branch branch" | tee -a "$DEBUG_LOG"
+            continue
+        fi
 
         if [ ! -d "device/fairphone/FP3" ]; then
           echo ">> [$(date)] Missing \"device/fairphone/FP3\", aborting"
@@ -334,19 +357,16 @@ for branch in ${BRANCH_NAME//,/ }; do
         echo ">> [$(date)] Starting build for $codename, $branch branch" | tee -a "$DEBUG_LOG"
         build_successful=false
         if brunch "$codename" "user" &>> "$DEBUG_LOG"; then
-          currentdate=$(date +%Y%m%d)
-          if [ "$builddate" != "$currentdate" ]; then
-            find out/target/product/"$codename" -maxdepth 1 -name "lineage-*-$currentdate-*.zip*" -type f -exec sh /root/fix_build_date.sh {} "$currentdate" "$builddate" \; &>> "$DEBUG_LOG"
-          fi
 
           # Move produced ZIP files to the main OUT directory
           echo ">> [$(date)] Moving build artifacts for $codename to '$ZIP_DIR/$zipsubdir'" | tee -a "$DEBUG_LOG"
           cd out/target/product/"$codename"
           for build in lineage-*.zip; do
             sha256sum "$build" > "$ZIP_DIR/$zipsubdir/$build.sha256sum"
+            md5sum "$build" > "$ZIP_DIR/$zipsubdir/$build.md5sum"
             cp -v system/build.prop "$ZIP_DIR/$zipsubdir/$build.prop" &>> "$DEBUG_LOG"
+            mv "$build" "$ZIP_DIR/$zipsubdir/" &>> "$DEBUG_LOG"
           done
-          find . -maxdepth 1 -name 'lineage-*.zip*' -type f -exec mv {} "$ZIP_DIR/$zipsubdir/" \; &>> "$DEBUG_LOG"
           recovery_name="lineage-$los_ver-$builddate-$RELEASE_TYPE-$codename-recovery.img"
           for image in recovery boot; do
             if [ -f "$image.img" ]; then
@@ -377,7 +397,7 @@ for branch in ${BRANCH_NAME//,/ }; do
         fi
         if [ -f /root/userscripts/post-build.sh ]; then
           echo ">> [$(date)] Running post-build.sh for $codename" >> "$DEBUG_LOG"
-          /root/userscripts/post-build.sh "$codename" $build_successful &>> "$DEBUG_LOG"
+          /root/userscripts/post-build.sh "$codename" $build_successful &>> "$DEBUG_LOG" || echo ">> [$(date)] Warning: post-build.sh failed!"
         fi
         echo ">> [$(date)] Finishing build for $codename" | tee -a "$DEBUG_LOG"
 
@@ -403,7 +423,7 @@ for branch in ${BRANCH_NAME//,/ }; do
             rm -rf ./*
           else
             cd "$source_dir"
-            (set +eu ; mka clean) &>> "$DEBUG_LOG"
+            (set +eu ; mka "${jobs_arg[@]}" clean) &>> "$DEBUG_LOG"
           fi
         fi
 
@@ -419,5 +439,5 @@ fi
 
 if [ -f /root/userscripts/end.sh ]; then
   echo ">> [$(date)] Running end.sh"
-  /root/userscripts/end.sh
+  /root/userscripts/end.sh || echo ">> [$(date)] Warning: end.sh failed!"
 fi
