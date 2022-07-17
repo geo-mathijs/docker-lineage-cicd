@@ -1,4 +1,4 @@
-# LineageOS 18.1 FP3
+# LineageOS 19.1 FP3
 
 This is a fork of the build pipeline for the popular LineageOS for microG ROM. It provides some hardening patches to both microG and Android itself.
 
