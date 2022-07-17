@@ -111,11 +111,7 @@ ENV DELETE_OLD_ZIPS 0
 ENV DELETE_OLD_LOGS 0
 
 # build type of your builds (user|userdebug|eng)
-<<<<<<< HEAD
 ENV BUILD_TYPE "user"
-=======
-ENV BUILD_TYPE "userdebug"
->>>>>>> upstream/master
 
 # You can optionally specify a USERSCRIPTS_DIR volume containing these scripts:
 #  * begin.sh, run at the very beginning
