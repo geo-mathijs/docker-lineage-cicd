@@ -338,11 +338,8 @@ for branch in ${BRANCH_NAME//,/ }; do
         breakfast "$codename" "user" &>> "$DEBUG_LOG"
         breakfast_returncode=$?
         set -eu
-        if [ $breakfast_returncode -ne 0 ]; then
-            echo ">> [$(date)] breakfast failed for $codename, $branch branch" | tee -a "$DEBUG_LOG"
-            continue
-        fi
 
+        # Before exiting, try running the pre-build to pull in vendor blobs
         if [ ! -d "device/fairphone/FP3" ]; then
           echo ">> [$(date)] Missing \"device/fairphone/FP3\", aborting"
           exit 1
@@ -353,10 +350,23 @@ for branch in ${BRANCH_NAME//,/ }; do
           /root/userscripts/pre-build.sh "$codename" &>> "$DEBUG_LOG"
         fi
 
+        # Second breakfast ?
+        if [ $breakfast_returncode -ne 0 ]; then
+            set +eu
+            breakfast "$codename" "user" &>> "$DEBUG_LOG"
+            breakfast_returncode=$?
+            set -eu
+
+            if [ $breakfast_returncode -ne 0 ]; then
+                echo ">> [$(date)] breakfast failed for $codename, $branch branch" | tee -a "$DEBUG_LOG"
+                continue
+            fi
+        fi
+
         # Start the build
         echo ">> [$(date)] Starting build for $codename, $branch branch" | tee -a "$DEBUG_LOG"
         build_successful=false
-        if brunch "$codename" "user" &>> "$DEBUG_LOG"; then
+        if (set +eu; brunch "$codename" "user") &>> "$DEBUG_LOG"; then
 
           # Move produced ZIP files to the main OUT directory
           echo ">> [$(date)] Moving build artifacts for $codename to '$ZIP_DIR/$zipsubdir'" | tee -a "$DEBUG_LOG"
