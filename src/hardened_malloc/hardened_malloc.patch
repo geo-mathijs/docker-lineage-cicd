@@ -1,17 +1,17 @@
 diff --git a/bionic/libc/Android.bp b/bionic/libc/Android.bp
-index 98b8781..4d9f1c4 100644
+index 4afcc4a..cca9e52 100644
 --- a/bionic/libc/Android.bp
 +++ b/bionic/libc/Android.bp
-@@ -68,6 +68,8 @@ libc_common_flags = [
- 
-     // GWP-ASan requires platform TLS.
-     "-fno-emulated-tls",
+@@ -75,6 +75,8 @@ libc_common_flags = [
+     // ever touch 0, 1, or 2 bytes into a call to memset, which was never going
+     // to amortize.)
+     "-fno-builtin",
 +
 +    "-DH_MALLOC_PREFIX",
  ]
  
  // Define some common cflags
-@@ -113,19 +115,6 @@ cc_defaults {
+@@ -120,19 +122,6 @@ cc_defaults {
      ldflags: ["-Wl,-z,muldefs"],
  
      multilib: {
@@ -31,38 +31,34 @@ index 98b8781..4d9f1c4 100644
          lib32: {
              product_variables: {
                  malloc_zero_contents: {
-@@ -173,19 +162,21 @@ libc32_scudo_product_variables = {
- // ========================================================
+@@ -185,17 +174,20 @@ libc32_scudo_product_variables = {
  cc_defaults {
      name: "libc_native_allocator_defaults",
--
+ 
 -    whole_static_libs: [
 -        "libjemalloc5",
 -        "libc_jemalloc_wrapper",
 -    ],
-     header_libs: ["gwp_asan_headers"],
 +    whole_static_libs: ["libc_jemalloc_wrapper"],
+     header_libs: ["gwp_asan_headers"],
      multilib: {
-+        lib32: {
+         lib64: {
+-            product_variables: libc_scudo_product_variables,
++            cflags: ["-DH_MALLOC_PREFIX"],
++            whole_static_libs: ["libhardened_malloc"],
+         },
+         lib32: {
+-            product_variables: libc32_scudo_product_variables,
 +            cflags: ["-DUSE_SCUDO"],
 +            whole_static_libs: ["libscudo"],
 +            exclude_static_libs: [
 +                "libjemalloc5",
 +                "libc_jemalloc_wrapper",
 +            ],
-+        },
-         lib64: {
--            product_variables: libc_scudo_product_variables,
-+            cflags: ["-DH_MALLOC_PREFIX"],
-+            whole_static_libs: ["libhardened_malloc"],
-         },
--        lib32: {
--            product_variables: libc32_scudo_product_variables,
--        }
+         }
      },
  }
- 
-@@ -194,12 +185,19 @@ cc_defaults {
+@@ -205,12 +197,19 @@ cc_defaults {
  cc_library_static {
      name: "libc_jemalloc_wrapper",
      defaults: ["libc_defaults"],
