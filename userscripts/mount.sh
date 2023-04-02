@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BRANCH_NAME="lineage-19.1"
+BRANCH_NAME="lineage-20.0"
 SRC_DIR="../src/"
 
 src_dir=$(realpath $SRC_DIR)
@@ -10,8 +10,8 @@ branch_dir=${branch_dir^^}
 mkdir system_dump
 pushd system_dump
 
-LATEST=$(curl https://download.lineageos.org/FP3 | grep "nightly-FP3-signed.zip" | grep "lineage-19.1" | sed "s/.*\/\([0-9]\+\/lineage-[0-9]\+\.1-[0-9]\+-nightly-FP3-signed\.zip\).*/\1/" | sort | tail -n 1)
-curl -L "https://mirrorbits.lineageos.org/full/FP3/$LATEST" -o lineage.zip
+LATEST_BUILD=$(curl https://download.lineageos.org/api/v1/FP3/nightly/changelog | jq -r '.response | map(select(.version == "20.0")) | sort_by(.datetime) | reverse | .[0].url')
+curl -L $LATEST_BUILD -o lineage.zip
 
 unzip lineage.zip payload.bin && rm lineage.zip
 
