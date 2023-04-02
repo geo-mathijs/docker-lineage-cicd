@@ -73,7 +73,7 @@ if [ "$LOCAL_MIRROR" = true ]; then
 
   if [ ! -d .repo ]; then
     echo ">> [$(date)] Initializing mirror repository" | tee -a "$repo_log"
-    ( yes||: ) | repo init -u https://github.com/LineageOS/mirror --mirror --no-clone-bundle -p linux &>> "$repo_log"
+    ( yes||: ) | repo init -u https://github.com/LineageOS/mirror --mirror --no-clone-bundle -p linux --git-lfs &>> "$repo_log"
   fi
 
   # Copy local manifests to the appropriate folder in order take them into consideration
@@ -136,6 +136,12 @@ for branch in ${BRANCH_NAME//,/ }; do
         frameworks_base_patch="android_frameworks_base-S.patch"
         modules_permission_patch="packages_modules_Permission-S.patch"
         ;;
+      lineage-20.0*)
+        themuppets_branch="lineage-20.0"
+        android_version="13"
+        frameworks_base_patch="android_frameworks_base-Android13.patch"
+        modules_permission_patch="packages_modules_Permission-Android13.patch"
+        ;;
       *)
         echo ">> [$(date)] Building branch $branch is not (yet) suppported"
         exit 1
@@ -163,9 +169,9 @@ for branch in ${BRANCH_NAME//,/ }; do
 
     echo ">> [$(date)] (Re)initializing branch repository" | tee -a "$repo_log"
     if [ "$LOCAL_MIRROR" = true ]; then
-      ( yes||: ) | repo init -u https://github.com/LineageOS/android.git --reference "$MIRROR_DIR" -b "$branch" &>> "$repo_log"
+      ( yes||: ) | repo init -u https://github.com/LineageOS/android.git --reference "$MIRROR_DIR" -b "$branch" --git-lfs &>> "$repo_log"
     else
-      ( yes||: ) | repo init -u https://github.com/LineageOS/android.git -b "$branch" &>> "$repo_log"
+      ( yes||: ) | repo init -u https://github.com/LineageOS/android.git -b "$branch" --git-lfs &>> "$repo_log"
     fi
 
     # Copy local manifests to the appropriate folder in order take them into consideration
@@ -371,19 +377,23 @@ for branch in ${BRANCH_NAME//,/ }; do
           # Move produced ZIP files to the main OUT directory
           echo ">> [$(date)] Moving build artifacts for $codename to '$ZIP_DIR/$zipsubdir'" | tee -a "$DEBUG_LOG"
           cd out/target/product/"$codename"
+          files_to_hash=()
           for build in lineage-*.zip; do
-            sha256sum "$build" > "$ZIP_DIR/$zipsubdir/$build.sha256sum"
-            md5sum "$build" > "$ZIP_DIR/$zipsubdir/$build.md5sum"
             cp -v system/build.prop "$ZIP_DIR/$zipsubdir/$build.prop" &>> "$DEBUG_LOG"
             mv "$build" "$ZIP_DIR/$zipsubdir/" &>> "$DEBUG_LOG"
+            files_to_hash+=( "$build" )
           done
-          recovery_name="lineage-$los_ver-$builddate-$RELEASE_TYPE-$codename-recovery.img"
-          for image in recovery boot; do
+          for image in recovery boot vendor_boot; do
             if [ -f "$image.img" ]; then
-              cp "$image.img" "$ZIP_DIR/$zipsubdir/$recovery_name"
-              break
+              recovery_name="lineage-$los_ver-$builddate-$RELEASE_TYPE-$codename-$image.img"
+              cp "$image.img" "$ZIP_DIR/$zipsubdir/$recovery_name" &>> "$DEBUG_LOG"
+              files_to_hash+=( "$recovery_name" )
             fi
-          done &>> "$DEBUG_LOG"
+          done
+          cd "$ZIP_DIR/$zipsubdir"
+          for f in "${files_to_hash[@]}"; do
+            sha256sum "$f" > "$ZIP_DIR/$zipsubdir/$f.sha256sum"
+          done
           cd "$source_dir"
           build_successful=true
         else
@@ -430,7 +440,7 @@ for branch in ${BRANCH_NAME//,/ }; do
           echo ">> [$(date)] Cleaning source dir for device $codename" | tee -a "$DEBUG_LOG"
           if [ "$BUILD_OVERLAY" = true ]; then
             cd "$TMP_DIR"
-            rm -rf ./*
+            rm -rf ./* || true
           else
             cd "$source_dir"
             (set +eu ; mka "${jobs_arg[@]}" clean) &>> "$DEBUG_LOG"
