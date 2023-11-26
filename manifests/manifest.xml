@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
   <project name="geo-mathijs/android_vendor_partner_gms" path="vendor/partner_gms" remote="github" revision="master" />
-  <project name="GrapheneOS/hardened_malloc" path="external/hardened_malloc" remote="github" revision="refs/heads/13" />
 </manifest>
 
